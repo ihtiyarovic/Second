@@ -13,24 +13,47 @@ app.use(cors());
 
 const isProduction = process.env.NODE_ENV === 'production';
 
+// Debug and validate DATABASE_URL
+if (isProduction) {
+  console.log('DATABASE_URL:', process.env.DATABASE_URL || 'Not set');
+  if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL environment variable is not set. Please configure it for production.');
+  }
+}
+
 const db = knex({
   client: isProduction ? 'pg' : 'sqlite3',
   connection: isProduction
-    ? process.env.DATABASE_URL
+    ? {
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false }, // Optional: Enable SSL for Heroku/Railway PostgreSQL
+      }
     : { filename: './database.sqlite' },
   useNullAsDefault: true,
 });
 
-// Function to check if an index exists
+// Function to check if an index exists (for SQLite, adjust for PostgreSQL if needed)
 const indexExists = async (table, indexName) => {
-  const result = await db.raw(`PRAGMA index_info(${indexName})`);
-  return result.length > 0;
+  try {
+    const result = isProduction
+      ? await db.raw(`SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = ?`, [indexName])
+      : await db.raw(`PRAGMA index_info(${indexName})`);
+    return isProduction ? result.rows.length > 0 : result.length > 0;
+  } catch (err) {
+    console.error('Error checking index existence:', err);
+    return false;
+  }
 };
 
 // Function to check if a table exists
 const tableExists = async (tableName) => {
-  const result = await db.schema.hasTable(tableName);
-  return result;
+  try {
+    const result = await db.schema.hasTable(tableName);
+    return result;
+  } catch (err) {
+    console.error('Error checking table existence:', err);
+    return false;
+  }
 };
 
 // Initialize database schema and create owner
@@ -72,7 +95,11 @@ const initDb = async () => {
 
     // Check if the unique index on username exists before creating it
     if (!(await indexExists('users', 'users_username_unique'))) {
-      await db.schema.raw('CREATE UNIQUE INDEX users_username_unique ON users (username)');
+      await db.schema.raw(
+        isProduction
+          ? 'CREATE UNIQUE INDEX users_username_unique ON users (username)'
+          : 'CREATE UNIQUE INDEX users_username_unique ON users (username)'
+      ); // Same syntax for both SQLite and PostgreSQL for this case
     }
 
     // Create owner if it doesn't exist
@@ -88,12 +115,15 @@ const initDb = async () => {
     }
   } catch (err) {
     console.error('DB Error:', err);
-    throw err; // Re-throw to handle in the caller
+    throw new Error(`Failed to initialize database: ${err.message}`);
   }
 };
 
 // Initialize the database when the app starts
-initDb().catch((err) => console.error('Failed to initialize database:', err));
+initDb().catch((err) => {
+  console.error('Failed to initialize database:', err);
+  process.exit(1); // Exit the process if database initialization fails
+});
 
 // Middleware for authentication
 const authenticate = (req, res, next) => {
@@ -302,7 +332,7 @@ app.post('/users', authenticate, async (req, res) => {
 if (isProduction) {
   const path = require('path');
   app.use(express.static(path.join(__dirname, 'client/build')));
-  app.get('*', (req, res) => {
+  app.get('*', (req, validation) => {
     res.sendFile(path.join(__dirname, 'client/build', 'index.html'));
   });
 }
