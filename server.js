@@ -7,7 +7,6 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
-
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -22,46 +21,79 @@ const db = knex({
   useNullAsDefault: true,
 });
 
+// Function to check if an index exists
+const indexExists = async (table, indexName) => {
+  const result = await db.raw(`PRAGMA index_info(${indexName})`);
+  return result.length > 0;
+};
+
+// Function to check if a table exists
+const tableExists = async (tableName) => {
+  const result = await db.schema.hasTable(tableName);
+  return result;
+};
+
 // Initialize database schema and create owner
 const initDb = async () => {
-  await db.schema.createTableIfNotExists('users', (table) => {
-    table.increments('id').primary();
-    table.string('username', 150).unique().notNullable();
-    table.string('password', 150).notNullable();
-    table.string('role', 50).notNullable().defaultTo('pupil');
-  });
+  try {
+    // Create users table if it doesn't exist
+    if (!(await tableExists('users'))) {
+      await db.schema.createTable('users', (table) => {
+        table.increments('id').primary();
+        table.string('username', 150).unique().notNullable();
+        table.string('password', 150).notNullable();
+        table.string('role', 50).notNullable().defaultTo('pupil');
+      });
+    }
 
-  await db.schema.createTableIfNotExists('questions', (table) => {
-    table.increments('id').primary();
-    table.string('text', 500).notNullable();
-    table.string('option_a', 150).notNullable();
-    table.string('option_b', 150).notNullable();
-    table.string('option_c', 150).notNullable();
-    table.string('option_d', 150).notNullable();
-    table.string('correct_answer', 1).notNullable();
-  });
+    // Create questions table if it doesn't exist
+    if (!(await tableExists('questions'))) {
+      await db.schema.createTable('questions', (table) => {
+        table.increments('id').primary();
+        table.string('text', 500).notNullable();
+        table.string('option_a', 150).notNullable();
+        table.string('option_b', 150).notNullable();
+        table.string('option_c', 150).notNullable();
+        table.string('option_d', 150).notNullable();
+        table.string('correct_answer', 1).notNullable();
+      });
+    }
 
-  await db.schema.createTableIfNotExists('answers', (table) => {
-    table.increments('id').primary();
-    table.integer('user_id').unsigned().references('users.id');
-    table.integer('question_id').unsigned().references('questions.id');
-    table.string('selected_option', 1).notNullable();
-    table.timestamp('timestamp').defaultTo(db.fn.now());
-  });
+    // Create answers table if it doesn't exist
+    if (!(await tableExists('answers'))) {
+      await db.schema.createTable('answers', (table) => {
+        table.increments('id').primary();
+        table.integer('user_id').unsigned().references('users.id');
+        table.integer('question_id').unsigned().references('questions.id');
+        table.string('selected_option', 1).notNullable();
+        table.timestamp('timestamp').defaultTo(db.fn.now());
+      });
+    }
 
-  const owner = await db('users').where({ username: 'xasan' }).first();
-  if (!owner) {
-    const hashedPassword = await bcrypt.hash('+998770816393', 10);
-    await db('users').insert({
-      username: 'xasan',
-      password: hashedPassword,
-      role: 'owner',
-    });
-    console.log('Owner "xasan" created successfully.');
+    // Check if the unique index on username exists before creating it
+    if (!(await indexExists('users', 'users_username_unique'))) {
+      await db.schema.raw('CREATE UNIQUE INDEX users_username_unique ON users (username)');
+    }
+
+    // Create owner if it doesn't exist
+    const owner = await db('users').where({ username: 'xasan' }).first();
+    if (!owner) {
+      const hashedPassword = await bcrypt.hash('+998770816393', 10);
+      await db('users').insert({
+        username: 'xasan',
+        password: hashedPassword,
+        role: 'owner',
+      });
+      console.log('Owner "xasan" created successfully.');
+    }
+  } catch (err) {
+    console.error('DB Error:', err);
+    throw err; // Re-throw to handle in the caller
   }
 };
 
-initDb().catch((err) => console.error('DB Error:', err));
+// Initialize the database when the app starts
+initDb().catch((err) => console.error('Failed to initialize database:', err));
 
 // Middleware for authentication
 const authenticate = (req, res, next) => {
