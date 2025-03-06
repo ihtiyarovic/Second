@@ -11,6 +11,10 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 app.use(cors());
+app.use(cors({
+  origin: 'https://chemistery.up.railway.app',
+  credentials: true,
+}));
 
 // Configure knex with Railway PostgreSQL details
 const db = knex({
