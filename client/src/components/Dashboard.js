@@ -217,7 +217,7 @@ function Dashboard({ user, setUser }) {
               <li key={q.id} className="question-item">
                 <strong>{q.text}</strong>
                 <br />
-                A: {q.option_a} | B: {q.option_b} | C: {q.option_c} | D: {q.option_d} (Correct: {q.correct_answer})
+                A: {q.option_a} | B: {q.option_b} | C: {q.option_c} | D: {q.option_d} 
                 {user.role === 'pupil' ? (
                   <form onSubmit={handleSubmitAnswer} className="answer-form">
                     <select
