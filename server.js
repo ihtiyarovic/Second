@@ -18,7 +18,9 @@ const db = knex({
   connection: {
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
+    acquireConnectionTimeout: 10000, // 10 seconds to avoid connection timeouts
   },
+  pool: { min: 2, max: 10 },
 });
 
 // Debug logs
@@ -109,7 +111,7 @@ const initDb = async () => {
       console.log('Owner "xasan" created successfully.');
     }
   } catch (err) {
-    console.error('DB Error:', err);
+    console.error('DB Error during initialization:', err);
   }
 };
 
@@ -135,6 +137,7 @@ const authenticate = (req, res, next) => {
     console.log('Authenticated user:', req.user); // Debug log
     next();
   } catch (err) {
+    console.error('Authentication error:', err); // Log token verification errors
     res.status(401).json({ error: 'Invalid token' });
   }
 };
@@ -142,6 +145,7 @@ const authenticate = (req, res, next) => {
 // Middleware for role-based access
 const requireRole = (roles) => (req, res, next) => {
   if (!req.user || !roles.includes(req.user.role)) {
+    console.log('Forbidden access attempt by:', req.user); // Debug log
     return res.status(403).json({ error: 'Forbidden' });
   }
   next();
@@ -161,8 +165,8 @@ app.post('/register', async (req, res) => {
     await db('users').insert({ username, password: hashedPassword, role: 'pupil' });
     res.status(201).json({ message: 'User registered as pupil' });
   } catch (err) {
-    console.error('Error registering user:', err); // Log the error
-    if (err.code === '23505') { // Unique violation
+    console.error('Error registering user:', err);
+    if (err.code === '23505') {
       res.status(400).json({ error: 'Username already exists' });
     } else {
       res.status(500).json({ error: 'Failed to add user', details: err.message });
@@ -187,11 +191,17 @@ app.post('/login', async (req, res) => {
 
 // **Question Routes**
 app.get('/questions', authenticate, async (req, res) => {
-  const questions = await db('questions').select();
-  res.json(questions);
+  try {
+    const questions = await db('questions').select();
+    res.json(questions);
+  } catch (err) {
+    console.error('Error fetching questions:', err);
+    res.status(500).json({ error: 'Failed to fetch questions', details: err.message });
+  }
 });
 
 app.post('/questions', authenticate, requireRole(['owner', 'admin']), async (req, res) => {
+  console.log('Request body:', req.body); // Log the incoming data
   const { text, option_a, option_b, option_c, option_d, correct_answer } = req.body;
   if (!text || !option_a || !option_b || !option_c || !option_d || !correct_answer) {
     return res.status(400).json({ error: 'All fields (text, options a-d, correct_answer) are required' });
@@ -208,9 +218,10 @@ app.post('/questions', authenticate, requireRole(['owner', 'admin']), async (req
       option_d,
       correct_answer,
     });
+    console.log('Question added successfully');
     res.status(201).json({ message: 'Question added' });
   } catch (err) {
-    console.error('Error adding question:', err); // Log the error
+    console.error('Error adding question:', err);
     res.status(500).json({ error: 'Failed to add question', details: err.message });
   }
 });
@@ -219,7 +230,7 @@ app.put('/questions/:id', authenticate, requireRole(['owner', 'admin']), async (
   const { id } = req.params;
   const { text, option_a, option_b, option_c, option_d, correct_answer } = req.body;
   try {
-    await db('questions').where({ id }).update({
+    const affectedRows = await db('questions').where({ id }).update({
       text,
       option_a,
       option_b,
@@ -227,6 +238,9 @@ app.put('/questions/:id', authenticate, requireRole(['owner', 'admin']), async (
       option_d,
       correct_answer,
     });
+    if (affectedRows === 0) {
+      return res.status(404).json({ error: 'Question not found' });
+    }
     res.json({ message: 'Question updated' });
   } catch (err) {
     console.error('Error updating question:', err);
@@ -237,7 +251,10 @@ app.put('/questions/:id', authenticate, requireRole(['owner', 'admin']), async (
 app.delete('/questions/:id', authenticate, requireRole(['owner', 'admin']), async (req, res) => {
   const { id } = req.params;
   try {
-    await db('questions').where({ id }).del();
+    const affectedRows = await db('questions').where({ id }).del();
+    if (affectedRows === 0) {
+      return res.status(404).json({ error: 'Question not found' });
+    }
     res.json({ message: 'Question deleted' });
   } catch (err) {
     console.error('Error deleting question:', err);
@@ -317,7 +334,7 @@ app.post('/users', authenticate, async (req, res) => {
     res.status(201).json({ message: `User ${username} added as ${role}` });
   } catch (err) {
     console.error('Error adding user:', err);
-    if (err.code === '23505') { // Unique violation
+    if (err.code === '23505') {
       res.status(400).json({ error: 'Username already exists' });
     } else {
       res.status(500).json({ error: 'Failed to add user', details: err.message });
