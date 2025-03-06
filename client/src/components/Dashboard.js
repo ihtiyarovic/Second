@@ -2,11 +2,19 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './Dashboard.css';
 
+// Use an environment variable for the backend URL
+const API_URL = process.env.REACT_APP_API_URL || 'https://your-app-name.up.railway.app'; // Replace with your Railway URL
+
 function Dashboard({ user, setUser }) {
   const [statistics, setStatistics] = useState({ totalPupils: 0, totalTeachers: 0, pupilStatistics: [] });
   const [questions, setQuestions] = useState([]);
   const [newQuestion, setNewQuestion] = useState({
-    text: '', option_a: '', option_b: '', option_c: '', option_d: '', correct_answer: ''
+    text: '',
+    option_a: '',
+    option_b: '',
+    option_c: '',
+    option_d: '',
+    correct_answer: '',
   });
   const [editingQuestion, setEditingQuestion] = useState(null);
   const [answer, setAnswer] = useState({ question_id: null, selected_option: '' });
@@ -25,7 +33,7 @@ function Dashboard({ user, setUser }) {
 
   const fetchStatistics = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/statistics', {
+      const res = await axios.get(`${API_URL}/statistics`, {
         headers: { Authorization: `Bearer ${user.token}` },
       });
       setStatistics(res.data);
@@ -36,10 +44,14 @@ function Dashboard({ user, setUser }) {
 
   const fetchPupilStatistics = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/statistics', {
+      const res = await axios.get(`${API_URL}/statistics`, {
         headers: { Authorization: `Bearer ${user.token}` },
       });
-      const pupilStats = res.data.pupilStatistics.find(stat => stat.username === user.username) || { correctAnswers: 0, incorrectAnswers: 0 };
+      const pupilStats =
+        res.data.pupilStatistics.find((stat) => stat.username === user.username) || {
+          correctAnswers: 0,
+          incorrectAnswers: 0,
+        };
       setStatistics({ totalPupils: 0, totalTeachers: 0, pupilStatistics: [pupilStats] });
     } catch (err) {
       console.error('Error fetching pupil statistics:', err);
@@ -48,7 +60,7 @@ function Dashboard({ user, setUser }) {
 
   const fetchQuestions = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/questions', {
+      const res = await axios.get(`${API_URL}/questions`, {
         headers: { Authorization: `Bearer ${user.token}` },
       });
       setQuestions(res.data);
@@ -60,37 +72,61 @@ function Dashboard({ user, setUser }) {
   const handleAddQuestion = async (e) => {
     e.preventDefault();
     try {
-      await axios.post('http://localhost:5000/questions', newQuestion, {
+      // Convert correct_answer to lowercase to match backend expectation
+      const questionToAdd = {
+        ...newQuestion,
+        correct_answer: newQuestion.correct_answer.toLowerCase(), // Convert "A" to "a", etc.
+      };
+      console.log('Sending question:', questionToAdd); // Debug log
+      const response = await axios.post(`${API_URL}/questions`, questionToAdd, {
         headers: { Authorization: `Bearer ${user.token}` },
       });
-      setNewQuestion({ text: '', option_a: '', option_b: '', option_c: '', option_d: '', correct_answer: '' });
+      setNewQuestion({
+        text: '',
+        option_a: '',
+        option_b: '',
+        option_c: '',
+        option_d: '',
+        correct_answer: '',
+      });
       fetchQuestions();
+      alert('Question added successfully');
     } catch (err) {
-      alert('Failed to add question');
+      console.error('Error adding question:', err);
+      alert('Failed to add question: ' + (err.response?.data?.error || err.message));
     }
   };
 
   const handleEditQuestion = async (e) => {
     e.preventDefault();
     try {
-      await axios.put(`http://localhost:5000/questions/${editingQuestion.id}`, editingQuestion, {
+      // Convert correct_answer to lowercase to match backend expectation
+      const questionToUpdate = {
+        ...editingQuestion,
+        correct_answer: editingQuestion.correct_answer.toLowerCase(),
+      };
+      await axios.put(`${API_URL}/questions/${editingQuestion.id}`, questionToUpdate, {
         headers: { Authorization: `Bearer ${user.token}` },
       });
       setEditingQuestion(null);
       fetchQuestions();
+      alert('Question updated successfully');
     } catch (err) {
-      alert('Failed to update question');
+      console.error('Error updating question:', err);
+      alert('Failed to update question: ' + (err.response?.data?.error || err.message));
     }
   };
 
   const handleDeleteQuestion = async (id) => {
     try {
-      await axios.delete(`http://localhost:5000/questions/${id}`, {
+      await axios.delete(`${API_URL}/questions/${id}`, {
         headers: { Authorization: `Bearer ${user.token}` },
       });
       fetchQuestions();
+      alert('Question deleted successfully');
     } catch (err) {
-      alert('Failed to delete question');
+      console.error('Error deleting question:', err);
+      alert('Failed to delete question: ' + (err.response?.data?.error || err.message));
     }
   };
 
@@ -101,16 +137,22 @@ function Dashboard({ user, setUser }) {
       return;
     }
     try {
-      await axios.post('http://localhost:5000/answers', answer, {
+      // Convert selected_option to lowercase to match backend expectation
+      const answerToSubmit = {
+        question_id: answer.question_id,
+        selected_option: answer.selected_option.toLowerCase(), // Convert "A" to "a", etc.
+      };
+      await axios.post(`${API_URL}/answers`, answerToSubmit, {
         headers: { Authorization: `Bearer ${user.token}` },
       });
       setAnswer({ question_id: null, selected_option: '' });
       if (user.role === 'pupil') {
-        fetchPupilStatistics(); // Update pupil's statistics after answering
+        fetchPupilStatistics();
       }
       alert('Answer submitted!');
     } catch (err) {
-      alert('Failed to submit answer: ' + (err.response?.data?.error || 'Unknown error'));
+      console.error('Error submitting answer:', err);
+      alert('Failed to submit answer: ' + (err.response?.data?.error || err.message));
     }
   };
 
@@ -121,31 +163,33 @@ function Dashboard({ user, setUser }) {
       return;
     }
     try {
-      await axios.post('http://localhost:5000/users', newUser, {
+      await axios.post(`${API_URL}/users`, newUser, {
         headers: { Authorization: `Bearer ${user.token}` },
       });
       setNewUser({ username: '', password: '', role: 'pupil' });
       if (user.role === 'owner' || user.role === 'admin') {
-        fetchStatistics(); // Refresh statistics after adding a user
+        fetchStatistics();
       }
       alert(`User ${newUser.username} added as ${newUser.role}`);
     } catch (err) {
-      alert('Failed to add user: ' + (err.response?.data?.error || 'Unknown error'));
+      console.error('Error adding user:', err);
+      alert('Failed to add user: ' + (err.response?.data?.error || err.message));
     }
   };
 
   const handleRemoveUser = async (username) => {
     try {
-      const userToRemove = statistics.pupilStatistics.find(stat => stat.username === username);
+      const userToRemove = statistics.pupilStatistics.find((stat) => stat.username === username);
       if (!userToRemove || !userToRemove.id) return;
 
-      await axios.delete(`http://localhost:5000/users/${userToRemove.id}`, {
+      await axios.delete(`${API_URL}/users/${userToRemove.id}`, {
         headers: { Authorization: `Bearer ${user.token}` },
       });
-      fetchStatistics(); // Refresh statistics after removal
+      fetchStatistics();
       alert(`User ${username} removed`);
     } catch (err) {
-      alert('Failed to remove user: ' + (err.response?.data?.error || 'Unknown error'));
+      console.error('Error removing user:', err);
+      alert('Failed to remove user: ' + (err.response?.data?.error || err.message));
     }
   };
 
@@ -161,7 +205,9 @@ function Dashboard({ user, setUser }) {
     <div className="dashboard-container">
       <div className="dashboard-box">
         <h2 className="dashboard-title">Dashboard ({user.role})</h2>
-        <button onClick={handleLogout} className="logout-button">Logout</button>
+        <button onClick={handleLogout} className="logout-button">
+          Logout
+        </button>
 
         {/* Questions Section - Visible to All Roles (Pupils Can Answer, Owners/Admins Can Manage) */}
         <div className="questions-section">
@@ -169,7 +215,8 @@ function Dashboard({ user, setUser }) {
           <ul className="questions-list">
             {questions.map((q) => (
               <li key={q.id} className="question-item">
-                <strong>{q.text}</strong><br />
+                <strong>{q.text}</strong>
+                <br />
                 A: {q.option_a} | B: {q.option_b} | C: {q.option_c} | D: {q.option_d} (Correct: {q.correct_answer})
                 {user.role === 'pupil' ? (
                   <form onSubmit={handleSubmitAnswer} className="answer-form">
@@ -186,13 +233,26 @@ function Dashboard({ user, setUser }) {
                       <option value="C">C</option>
                       <option value="D">D</option>
                     </select>
-                    <button type="submit" className="submit-button" disabled={!answer.question_id || !answer.selected_option}>Submit Answer</button>
+                    <button
+                      type="submit"
+                      className="submit-button"
+                      disabled={!answer.question_id || !answer.selected_option}
+                    >
+                      Submit Answer
+                    </button>
                   </form>
                 ) : (
                   (user.role === 'owner' || user.role === 'admin') && (
                     <div className="question-actions">
-                      <button onClick={() => setEditingQuestion(q)} className="edit-button">Edit</button>
-                      <button onClick={() => handleDeleteQuestion(q.id)} className="delete-button">Delete</button>
+                      <button onClick={() => setEditingQuestion(q)} className="edit-button">
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteQuestion(q.id)}
+                        className="delete-button"
+                      >
+                        Delete
+                      </button>
                     </div>
                   )
                 )}
@@ -217,7 +277,9 @@ function Dashboard({ user, setUser }) {
                   type="text"
                   placeholder="Option A"
                   value={newQuestion.option_a}
-                  onChange={(e) => setNewQuestion({ ...newQuestion, option_a: e.target.value })}
+                  onChange={(e) =>
+                    setNewQuestion({ ...newQuestion, option_a: e.target.value })
+                  }
                   className="question-input"
                   required
                 />
@@ -225,7 +287,9 @@ function Dashboard({ user, setUser }) {
                   type="text"
                   placeholder="Option B"
                   value={newQuestion.option_b}
-                  onChange={(e) => setNewQuestion({ ...newQuestion, option_b: e.target.value })}
+                  onChange={(e) =>
+                    setNewQuestion({ ...newQuestion, option_b: e.target.value })
+                  }
                   className="question-input"
                   required
                 />
@@ -233,7 +297,9 @@ function Dashboard({ user, setUser }) {
                   type="text"
                   placeholder="Option C"
                   value={newQuestion.option_c}
-                  onChange={(e) => setNewQuestion({ ...newQuestion, option_c: e.target.value })}
+                  onChange={(e) =>
+                    setNewQuestion({ ...newQuestion, option_c: e.target.value })
+                  }
                   className="question-input"
                   required
                 />
@@ -241,13 +307,17 @@ function Dashboard({ user, setUser }) {
                   type="text"
                   placeholder="Option D"
                   value={newQuestion.option_d}
-                  onChange={(e) => setNewQuestion({ ...newQuestion, option_d: e.target.value })}
+                  onChange={(e) =>
+                    setNewQuestion({ ...newQuestion, option_d: e.target.value })
+                  }
                   className="question-input"
                   required
                 />
                 <select
                   value={newQuestion.correct_answer}
-                  onChange={(e) => setNewQuestion({ ...newQuestion, correct_answer: e.target.value })}
+                  onChange={(e) =>
+                    setNewQuestion({ ...newQuestion, correct_answer: e.target.value })
+                  }
                   className="question-select"
                   required
                 >
@@ -257,7 +327,9 @@ function Dashboard({ user, setUser }) {
                   <option value="C">C</option>
                   <option value="D">D</option>
                 </select>
-                <button type="submit" className="add-question-button">Add Question</button>
+                <button type="submit" className="add-question-button">
+                  Add Question
+                </button>
               </form>
 
               {/* Edit Question */}
@@ -268,41 +340,56 @@ function Dashboard({ user, setUser }) {
                     <input
                       type="text"
                       value={editingQuestion.text}
-                      onChange={(e) => setEditingQuestion({ ...editingQuestion, text: e.target.value })}
+                      onChange={(e) =>
+                        setEditingQuestion({ ...editingQuestion, text: e.target.value })
+                      }
                       className="question-input"
                       required
                     />
                     <input
                       type="text"
                       value={editingQuestion.option_a}
-                      onChange={(e) => setEditingQuestion({ ...editingQuestion, option_a: e.target.value })}
+                      onChange={(e) =>
+                        setEditingQuestion({ ...editingQuestion, option_a: e.target.value })
+                      }
                       className="question-input"
                       required
                     />
                     <input
                       type="text"
                       value={editingQuestion.option_b}
-                      onChange={(e) => setEditingQuestion({ ...editingQuestion, option_b: e.target.value })}
+                      onChange={(e) =>
+                        setEditingQuestion({ ...editingQuestion, option_b: e.target.value })
+                      }
                       className="question-input"
                       required
                     />
                     <input
                       type="text"
                       value={editingQuestion.option_c}
-                      onChange={(e) => setEditingQuestion({ ...editingQuestion, option_c: e.target.value })}
+                      onChange={(e) =>
+                        setEditingQuestion({ ...editingQuestion, option_c: e.target.value })
+                      }
                       className="question-input"
                       required
                     />
                     <input
                       type="text"
                       value={editingQuestion.option_d}
-                      onChange={(e) => setEditingQuestion({ ...editingQuestion, option_d: e.target.value })}
+                      onChange={(e) =>
+                        setEditingQuestion({ ...editingQuestion, option_d: e.target.value })
+                      }
                       className="question-input"
                       required
                     />
                     <select
                       value={editingQuestion.correct_answer}
-                      onChange={(e) => setEditingQuestion({ ...editingQuestion, correct_answer: e.target.value })}
+                      onChange={(e) =>
+                        setEditingQuestion({
+                          ...editingQuestion,
+                          correct_answer: e.target.value,
+                        })
+                      }
                       className="question-select"
                       required
                     >
@@ -312,8 +399,16 @@ function Dashboard({ user, setUser }) {
                       <option value="C">C</option>
                       <option value="D">D</option>
                     </select>
-                    <button type="submit" className="update-question-button">Update Question</button>
-                    <button type="button" onClick={() => setEditingQuestion(null)} className="cancel-button">Cancel</button>
+                    <button type="submit" className="update-question-button">
+                      Update Question
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingQuestion(null)}
+                      className="cancel-button"
+                    >
+                      Cancel
+                    </button>
                   </form>
                 </div>
               )}
@@ -345,12 +440,14 @@ function Dashboard({ user, setUser }) {
                   value={newUser.role}
                   onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
                   className="role-select"
-                  disabled={user.role !== 'owner'} // Only owners can select 'admin'
+                  disabled={user.role !== 'owner'}
                 >
                   <option value="pupil">Pupil</option>
                   {user.role === 'owner' && <option value="admin">Teacher</option>}
                 </select>
-                <button type="submit" className="add-user-button">Add User</button>
+                <button type="submit" className="add-user-button">
+                  Add User
+                </button>
               </form>
             </div>
           )}
@@ -367,7 +464,12 @@ function Dashboard({ user, setUser }) {
                   {statistics.pupilStatistics.map((stat) => (
                     <li key={stat.username} className="statistic-item">
                       {stat.username}: {stat.correctAnswers} correct, {stat.incorrectAnswers} incorrect
-                      <button onClick={() => handleRemoveUser(stat.username)} className="remove-button">Remove</button>
+                      <button
+                        onClick={() => handleRemoveUser(stat.username)}
+                        className="remove-button"
+                      >
+                        Remove
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -381,7 +483,10 @@ function Dashboard({ user, setUser }) {
           {user.role === 'pupil' && (
             <div className="statistics-section">
               <h3 className="section-title">Your Statistics</h3>
-              <p>{user.username}: {statistics.pupilStatistics[0]?.correctAnswers || 0} correct, {statistics.pupilStatistics[0]?.incorrectAnswers || 0} incorrect</p>
+              <p>
+                {user.username}: {statistics.pupilStatistics[0]?.correctAnswers || 0} correct,{' '}
+                {statistics.pupilStatistics[0]?.incorrectAnswers || 0} incorrect
+              </p>
             </div>
           )}
         </div>
