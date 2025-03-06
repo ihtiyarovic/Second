@@ -3,7 +3,7 @@ import axios from 'axios';
 import './Dashboard.css';
 
 // Use an environment variable for the backend URL
-const API_URL = process.env.REACT_APP_API_URL || 'https://your-app-name.up.railway.app'; // Replace with your Railway URL
+const API_URL = process.env.REACT_APP_API_URL || 'https://chemistery.up.railway.app'; // Replace with your Railway URL
 
 function Dashboard({ user, setUser }) {
   const [statistics, setStatistics] = useState({ totalPupils: 0, totalTeachers: 0, pupilStatistics: [] });
