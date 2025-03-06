@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const url = require('url'); // Added for parsing DATABASE_URL
 
 dotenv.config();
 
@@ -11,98 +12,104 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-const isProduction = process.env.NODE_ENV === 'production';
-
-// Debug and validate DATABASE_URL
-if (isProduction) {
-  console.log('DATABASE_URL:', process.env.DATABASE_URL || 'Not set');
-  if (!process.env.DATABASE_URL) {
-    throw new Error('DATABASE_URL environment variable is not set. Please configure it for production.');
-  }
-}
-
+// Configure knex with Railway PostgreSQL details
 const db = knex({
-  client: isProduction ? 'pg' : 'sqlite3',
-  connection: isProduction
-    ? {
-        connectionString: process.env.DATABASE_URL,
-        ssl: { rejectUnauthorized: false }, // Optional: Enable SSL for Heroku/Railway PostgreSQL
-      }
-    : { filename: './database.sqlite' },
-  useNullAsDefault: true,
+  client: 'pg',
+  connection: {
+    connectionString: process.env.DATABASE_URL, // Railway provides this automatically
+    ssl: {
+      rejectUnauthorized: false, // Railway handles SSL; disable strict checking for simplicity
+    },
+  },
 });
 
-// Function to check if an index exists (for SQLite, adjust for PostgreSQL if needed)
-const indexExists = async (table, indexName) => {
-  try {
-    const result = isProduction
-      ? await db.raw(`SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = ?`, [indexName])
-      : await db.raw(`PRAGMA index_info(${indexName})`);
-    return isProduction ? result.rows.length > 0 : result.length > 0;
-  } catch (err) {
-    console.error('Error checking index existence:', err);
-    return false;
-  }
-};
-
-// Function to check if a table exists
-const tableExists = async (tableName) => {
-  try {
-    const result = await db.schema.hasTable(tableName);
-    return result;
-  } catch (err) {
-    console.error('Error checking table existence:', err);
-    return false;
-  }
-};
+// Debug logs to verify the DATABASE_URL
+console.log('DATABASE_URL:', process.env.DATABASE_URL);
+console.log('Parsed Connection:', url.parse(process.env.DATABASE_URL || ''));
 
 // Initialize database schema and create owner
 const initDb = async () => {
   try {
-    // Create users table if it doesn't exist
-    if (!(await tableExists('users'))) {
+    // Create users table
+    const usersTableExists = await db.schema.hasTable('users');
+    if (!usersTableExists) {
       await db.schema.createTable('users', (table) => {
-        table.increments('id').primary();
+        table.increments('id').primary(); // serial in PostgreSQL
         table.string('username', 150).unique().notNullable();
         table.string('password', 150).notNullable();
         table.string('role', 50).notNullable().defaultTo('pupil');
       });
+    } else {
+      // Ensure the unique constraint exists on username
+      const constraints = await db('information_schema.table_constraints')
+        .where({
+          table_name: 'users',
+          constraint_type: 'UNIQUE',
+          constraint_name: 'users_username_unique',
+        })
+        .first();
+
+      if (!constraints) {
+        await db.schema.alterTable('users', (table) => {
+          table.unique('username', 'users_username_unique');
+        });
+      }
     }
 
-    // Create questions table if it doesn't exist
-    if (!(await tableExists('questions'))) {
-      await db.schema.createTable('questions', (table) => {
-        table.increments('id').primary();
-        table.string('text', 500).notNullable();
-        table.string('option_a', 150).notNullable();
-        table.string('option_b', 150).notNullable();
-        table.string('option_c', 150).notNullable();
-        table.string('option_d', 150).notNullable();
-        table.string('correct_answer', 1).notNullable();
-      });
-    }
+    // Create questions table
+    await db.schema.createTableIfNotExists('questions', (table) => {
+      table.increments('id').primary();
+      table.string('text', 500).notNullable();
+      table.string('option_a', 150).notNullable();
+      table.string('option_b', 150).notNullable();
+      table.string('option_c', 150).notNullable();
+      table.string('option_d', 150).notNullable();
+      table.string('correct_answer', 1).notNullable();
+    });
 
-    // Create answers table if it doesn't exist
-    if (!(await tableExists('answers'))) {
+    // Create answers table with check for existing foreign key constraints
+    const answersTableExists = await db.schema.hasTable('answers');
+    if (!answersTableExists) {
       await db.schema.createTable('answers', (table) => {
         table.increments('id').primary();
-        table.integer('user_id').unsigned().references('users.id');
-        table.integer('question_id').unsigned().references('questions.id');
+        table.integer('user_id').unsigned().references('id').inTable('users').onDelete('CASCADE');
+        table.integer('question_id').unsigned().references('id').inTable('questions').onDelete('CASCADE');
         table.string('selected_option', 1).notNullable();
         table.timestamp('timestamp').defaultTo(db.fn.now());
       });
+    } else {
+      // Check if the user_id foreign key constraint exists
+      const userForeignKeys = await db('information_schema.table_constraints')
+        .where({
+          table_name: 'answers',
+          constraint_type: 'FOREIGN KEY',
+          constraint_name: 'answers_user_id_foreign',
+        })
+        .first();
+
+      if (!userForeignKeys) {
+        await db.schema.alterTable('answers', (table) => {
+          table.foreign('user_id').references('id').inTable('users').onDelete('CASCADE');
+        });
+      }
+
+      // Check if the question_id foreign key constraint exists
+      const questionForeignKeys = await db('information_schema.table_constraints')
+        .where({
+          table_name: 'answers',
+          constraint_type: 'FOREIGN KEY',
+          constraint_name: 'answers_question_id_foreign',
+        })
+        .first();
+
+      if (!questionForeignKeys) {
+        await db.schema.alterTable('answers', (table) => {
+          table.foreign('question_id').references('id').inTable('questions').onDelete('CASCADE');
+        });
+      }
     }
 
-    // Check if the unique index on username exists before creating it
-    if (!(await indexExists('users', 'users_username_unique'))) {
-      await db.schema.raw(
-        isProduction
-          ? 'CREATE UNIQUE INDEX users_username_unique ON users (username)'
-          : 'CREATE UNIQUE INDEX users_username_unique ON users (username)'
-      ); // Same syntax for both SQLite and PostgreSQL for this case
-    }
-
-    // Create owner if it doesn't exist
+    // Seed the owner user if not exists
     const owner = await db('users').where({ username: 'xasan' }).first();
     if (!owner) {
       const hashedPassword = await bcrypt.hash('+998770816393', 10);
@@ -115,15 +122,20 @@ const initDb = async () => {
     }
   } catch (err) {
     console.error('DB Error:', err);
-    throw new Error(`Failed to initialize database: ${err.message}`);
   }
 };
 
-// Initialize the database when the app starts
-initDb().catch((err) => {
-  console.error('Failed to initialize database:', err);
-  process.exit(1); // Exit the process if database initialization fails
-});
+initDb();
+
+// Test connection on startup
+(async () => {
+  try {
+    const version = await db.raw('SELECT VERSION()');
+    console.log('Database connection successful. Version:', version.rows[0].version);
+  } catch (err) {
+    console.error('Database connection error:', err);
+  }
+})();
 
 // Middleware for authentication
 const authenticate = (req, res, next) => {
@@ -258,19 +270,14 @@ app.put('/users/:id/role', authenticate, requireRole(['owner']), async (req, res
   }
 });
 
-app.delete(
-  '/users/:id',
-  authenticate,
-  requireRole(['owner', 'admin']), // Updated to allow both owners and admins
-  async (req, res) => {
-    try {
-      await db('users').where({ id: req.params.id }).del();
-      res.json({ message: 'User deleted' });
-    } catch (err) {
-      res.status(500).json({ error: 'Failed to delete user' });
-    }
+app.delete('/users/:id', authenticate, requireRole(['owner', 'admin']), async (req, res) => {
+  try {
+    await db('users').where({ id: req.params.id }).del();
+    res.json({ message: 'User deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete user' });
   }
-);
+});
 
 // **Statistics Route**
 app.get('/statistics', authenticate, requireRole(['owner', 'admin', 'pupil']), async (req, res) => {
@@ -309,12 +316,10 @@ app.get('/statistics', authenticate, requireRole(['owner', 'admin', 'pupil']), a
 app.post('/users', authenticate, async (req, res) => {
   const { username, password, role } = req.body;
 
-  // Restrict admin creation to owners only
   if (role === 'admin' && req.user.role !== 'owner') {
     return res.status(403).json({ error: 'Only owners can add admins' });
   }
 
-  // Validate role
   if (!['admin', 'pupil'].includes(role)) {
     return res.status(400).json({ error: 'Invalid role' });
   }
@@ -329,13 +334,12 @@ app.post('/users', authenticate, async (req, res) => {
 });
 
 // Serve frontend in production
-if (isProduction) {
-  const path = require('path');
-  app.use(express.static(path.join(__dirname, 'client/build')));
-  app.get('*', (req, validation) => {
-    res.sendFile(path.join(__dirname, 'client/build', 'index.html'));
-  });
-}
+const path = require('path');
+app.use(express.static(path.join(__dirname, 'client/build')));
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'client/build', 'index.html'));
+});
 
+// Ensure app listens on 0.0.0.0 for Railway
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
